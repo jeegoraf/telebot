@@ -19,6 +19,7 @@ cur_event = {}
 def start(message, res=False):
     global cur_user
     cur_user['State'] = 'Start Screen'
+    cur_user['TelegramID'] = message.from_user.id
     markup_inline = types.InlineKeyboardMarkup()
     item_org = types.InlineKeyboardButton(text='Организатор', callback_data='input_name_org')
     markup_inline.add(item_org)
@@ -35,11 +36,11 @@ def db_add_user(TelegramID: int, FullName: str, Role: str):
     conn.commit()
 
 
-def db_add_event(EventName: str, PeopleMaxCount: str, DateTime: str, Place: str,
+def db_add_event(EventName: str, PeopleMaxCount: str, Date: str, Time: str, Place: str,
                  About: str, HashTags: str, ID_Org: int, Status: str):
-    cursor.execute('INSERT INTO Events (EventName, PeopleMaxCount, DateTime, Place, About, HashTags, ID_Org, Status) '
-                   'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                   (EventName, PeopleMaxCount, DateTime, Place, About, HashTags, ID_Org, Status))
+    cursor.execute('INSERT INTO Events (EventName, PeopleMaxCount, Date, Time, Place, About, HashTags, ID_Org, Status) '
+                   'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                   (EventName, PeopleMaxCount, Date, Time, Place, About, HashTags, ID_Org, Status))
     conn.commit()
 
 
@@ -48,6 +49,7 @@ def db_add_user_event(ID_USER: int, ID_EVENT: int):
                    (ID_USER, ID_EVENT))
     conn.commit()
 
+
 # обработка данных с нажатий кнопок
 
 
@@ -55,7 +57,45 @@ def db_add_user_event(ID_USER: int, ID_EVENT: int):
 def query_handler(call):
     global cur_user
     global cur_event
-    
+
+    # отмена мероприятия организатором 
+
+    if 'cancel_event' in call.data:
+        bot.answer_callback_query(call.id)
+        i = len(call.data) - 1
+        ID_Event = ''
+        ID_User = call.from_user.id
+
+        while call.data[i].isnumeric():
+            ID_Event += call.data[i]
+            i -= 1
+
+        sql = """Update EVENTS set Status = ? where ID_EVENT=?"""
+        cursor.execute(sql, ('CANCELLED', ID_Event))
+
+
+
+    if 'participants_list' in call.data:
+        bot.answer_callback_query(call.id)
+        i = len(call.data) - 1
+        ID_Event = ''
+        ID_User = call.from_user.id
+
+        while call.data[i].isnumeric():
+            ID_Event += call.data[i]
+            i -= 1
+
+        sql = 'SELECT FULLNAME from Users JOIN User_Event On ID_USER = TelegramID'
+        cursor.execute(sql)
+        data = cursor.fetchall()
+        print(data)
+        parts = ''
+
+        for i in data:
+            parts += str(i[0]) + '\n'
+
+        bot.send_message(call.message.chat.id, parts)
+        
     # обработка регистрации пользователя на мероприятие
 
     if 'register_to_Event' in call.data:
@@ -67,7 +107,7 @@ def query_handler(call):
             ID_Event += call.data[i]
             i -= 1
 
-        ID_User = call.message.from_user.id
+        ID_User = call.from_user.id
 
         sql = 'SELECT * FROM USER_EVENT WHERE ID_EVENT=? AND ID_User=?'
         cursor.execute(sql, (ID_Event, ID_User))
@@ -81,25 +121,45 @@ def query_handler(call):
 
         call.data = 'participant'
 
+    if 'cancel_registration_to_Event' in call.data:
+        bot.answer_callback_query(call.id)
+        i = len(call.data) - 1
+        ID_Event = ''
+
+        while call.data[i].isnumeric():
+            ID_Event += call.data[i]
+            i -= 1
+
+        ID_User = call.from_user.id
+
+        sql = 'DELETE FROM User_Event where ID_User=? AND ID_Event=?'
+        cursor.execute(sql, (ID_User, ID_Event))
+        data = cursor.fetchall()
+
+        sql_update_event = """Update EVENTS set PeopleCount = PeopleCount - 1 where ID_EVENT=?"""
+        cursor.execute(sql_update_event, ID_Event)
+        conn.commit()
+        call.data = 'participant'
+
     # внесение мероприятия в БД
 
     if call.data == 'input_event_accepted':
         bot.answer_callback_query(call.id)
         cur_event['ID_Org'] = cur_user['TelegramID']
-        db_add_event(cur_event['EventName'], cur_event['PeopleMaxCount'], cur_event['DateTime'], cur_event['Place']
+        db_add_event(cur_event['EventName'], cur_event['PeopleMaxCount'], cur_event['Date'], cur_event['Time'], cur_event['Place']
                      , cur_event['About'], cur_event['HashTags'], cur_event['ID_Org'], 'Registration Opened')
         call.data = 'org'
 
     # проверка на наличие пользователя в БД
 
     if call.data == 'input_name_org' or call.data == 'input_name_participant':
+
         bot.answer_callback_query(call.id)
 
         # cur_user - глобальная переменная для хранения данных пользователя
         
         cur_user["Role"] = 'Организатор' if call.data == 'input_name_org' else 'Участник'
-        telegramID = call.message.from_user.id
-        cur_user['TelegramID'] = telegramID
+        telegramID = cur_user['TelegramID']
 
         # проверяем результаты запроса в БД по telegramID текущего пользователя
 
@@ -145,7 +205,7 @@ def query_handler(call):
 
         try:
 
-            db_add_user(cur_user['TelegramID'], cur_user['UserName'], cur_user['Role'])
+            db_add_user(int(cur_user['TelegramID']), cur_user['UserName'], cur_user['Role'])
 
         except:
 
@@ -164,7 +224,7 @@ def query_handler(call):
         markup_inline.add(item_org)
         item_part = types.InlineKeyboardButton(text='Участник', callback_data='input_name_participant')
         markup_inline.add(item_part)
-        bot.send_message(call.message.chat.id, 'Что-то не так? Глаза разуй, блядь', reply_markup=markup_inline)
+        bot.send_message(call.message.chat.id, 'Поаккуратнее на поворотах, братан!', reply_markup=markup_inline)
 
     # ветка "Организатор", выбор действия
 
@@ -173,10 +233,8 @@ def query_handler(call):
         markup_inline = types.InlineKeyboardMarkup()
         item_create_event = types.InlineKeyboardButton(text='Создать мероприятие', callback_data='createEvent')
         markup_inline.add(item_create_event)
-        item_events = types.InlineKeyboardButton(text='Список доступных мероприятий', callback_data='eventsList')
+        item_events = types.InlineKeyboardButton(text='Мои мероприятия', callback_data='eventsList')
         markup_inline.add(item_events)
-        # item_cancel_first = types.InlineKeyboardButton(text='Отмена', callback_data='cancelFirstChoice')
-        # markup_inline.add(item_cancel_first)
         bot.send_message(call.message.chat.id, 'Что будем делать?', reply_markup=markup_inline)
 
     # НАЧАЛО создания мероприятия
@@ -197,8 +255,8 @@ def query_handler(call):
         cursor.execute(sql)
         data = cursor.fetchall()
         for i in range(len(data)):
-            register_to_event = types.InlineKeyboardButton(text=data[i][1], callback_data='describe_Event' + str(data[i][0]))
-            markup_inline.add(register_to_event)
+            cancel_event = types.InlineKeyboardButton(text=data[i][1], callback_data='describe_Event' + str(data[i][0]))
+            markup_inline.add(cancel_event)
 
         bot.send_message(call.message.chat.id, 'Список планируемых мероприятий:', reply_markup=markup_inline)
 
@@ -212,21 +270,85 @@ def query_handler(call):
         while call.data[i].isnumeric():
             ID_Event += call.data[i]
             i -= 1
+
         sql = 'SELECT * from Events WHERE ID_Event=:ID_Event'
         cursor.execute(sql, {'ID_Event': int(ID_Event)})
         data = cursor.fetchone()
 
         markup_inline = types.InlineKeyboardMarkup()
-        register_to_event = types.InlineKeyboardButton(text='Зарегистрироваться', callback_data='register_to_Event'
+
+        # проверка регистрации пользователя на мероприятие
+        # если он не зарегистрирован - рендерим кнопку "Зарегистрироваться"
+        # если зарегистрирован - рендерим кнопку "Отменить регистрацию"
+
+        sql_check_reg = 'SELECT * from User_Event Where ID_Event=? AND ID_User=?'
+        cursor.execute(sql_check_reg, (int(ID_Event), call.from_user.id))
+        data_check = cursor.fetchall()
+        print(data_check)
+
+        if data_check is None or len(data_check) == 0:
+            cancel_event = types.InlineKeyboardButton(text='Зарегистрироваться', callback_data='register_to_Event'
+                                                                                                    + str(data[0]))
+            markup_inline.add(cancel_event)
+
+        else:
+            cancel_event = types.InlineKeyboardButton(text='Отменить регистрацию',
+                                                           callback_data='cancel_registration_to_Event' + str(data[0]))
+            markup_inline.add(cancel_event)
+
+        bot.send_message(call.message.chat.id, 'Название мероприятия: ' + str(data[1]) + '\n'
+                         + 'Максимальное количество участников: ' + str(data[2]) + '\n'
+                         + 'Текущее количество участников:' + str(data[3]) + '\n'
+                         + 'Дата: ' + str(data[4]) + '\n'
+                         + 'Время: ' + str(data[5]) + '\n'
+                         + 'Место проведения: ' + str(data[6]) + '\n'
+                         + 'Описание: ' + str(data[7]), reply_markup=markup_inline)
+
+    # список мероприятий, созданных текущим пользователем
+
+    if call.data == 'eventsList':
+        bot.answer_callback_query(call.id)
+        markup_inline = types.InlineKeyboardMarkup()
+        sql = 'SELECT * from Events where ID_Org=:ID_Org'
+        cursor.execute(sql, {'ID_Org': call.from_user.id})
+        data = cursor.fetchall()
+        print(data)
+        for i in range(len(data)):
+            cancel_event = types.InlineKeyboardButton(text=data[i][1], callback_data='describe_event_org' + str(data[i][0]))
+            markup_inline.add(cancel_event)
+
+        bot.send_message(call.message.chat.id, 'Мои мероприятия:', reply_markup=markup_inline)
+
+    if 'describe_event_org' in call.data:
+        bot.answer_callback_query(call.id)
+        i = len(call.data) - 1
+        ID_Event = ''
+
+        while call.data[i].isnumeric():
+            ID_Event += call.data[i]
+            i -= 1
+
+        sql = 'SELECT * from Events WHERE ID_Event=:ID_Event'
+        cursor.execute(sql, {'ID_Event': int(ID_Event)})
+        data = cursor.fetchone()
+
+        markup_inline = types.InlineKeyboardMarkup()
+
+        parts_list = types.InlineKeyboardButton(text='Список участников', callback_data='participants_list'
                                                                                                 + str(data[0]))
-        markup_inline.add(register_to_event)
+        markup_inline.add(parts_list)
+
+        cancel_event = types.InlineKeyboardButton(text='Отменить мероприятие', callback_data='cancel_event'
+                                                                                             + str(data[0]))
+        markup_inline.add(cancel_event)
 
         bot.send_message(call.message.chat.id,  'Название мероприятия: ' + str(data[1]) + '\n'
                          + 'Максимальное количество участников: ' + str(data[2]) + '\n'
                          + 'Текущее количество участников:' + str(data[3]) + '\n'
-                         + 'Дата и время: ' + str(data[4]) + '\n'
-                         + 'Место проведения: ' + str(data[5]) + '\n'
-                         + 'Описание: ' + str(data[6]), reply_markup=markup_inline)
+                         + 'Дата: ' + str(data[4]) + '\n'
+                         + 'Время: ' + str(data[5]) + '\n'
+                         + 'Место проведения: ' + str(data[6]) + '\n'
+                         + 'Описание: ' + str(data[7]), reply_markup=markup_inline)
 
 
 # обработка введенного текста
@@ -274,7 +396,7 @@ def text_handler(message):
     elif cur_user['State'] == 'Create Event Time':
         bot.send_message(message.chat.id, 'Введите место проведения мероприятия:')
         cur_event['Time'] = input_text
-        cur_user['State'] = 'Create Event Place '
+        cur_user['State'] = 'Create Event Place'
 
     elif cur_user['State'] == 'Create Event Place':
         bot.send_message(message.chat.id, 'Напишите краткое описание мероприятия:')
