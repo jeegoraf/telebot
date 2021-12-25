@@ -3,7 +3,8 @@ import telebot
 import sqlite3
 from telebot import types
 
-bot = telebot.TeleBot('5066457668:AAGrNLTfH_HUwkIeMn8rVEExUp79dZHO4xs')
+#bot = telebot.TeleBot('5066457668:AAGrNLTfH_HUwkIeMn8rVEExUp79dZHO4xs')
+bot = telebot.TeleBot('5095240172:AAHkN0L2oOWa757GfsXD-LLXQ7PUAP7Seac')
 
 conn = sqlite3.connect('userDatabase.db', check_same_thread=False)
 cursor = conn.cursor()
@@ -49,9 +50,7 @@ def db_add_user_event(ID_USER: int, ID_EVENT: int):
                    (ID_USER, ID_EVENT))
     conn.commit()
 
-
 # обработка данных с нажатий кнопок
-
 
 @bot.callback_query_handler(func=lambda call: True)
 def query_handler(call):
@@ -71,8 +70,23 @@ def query_handler(call):
             i -= 1
 
         sql = """Update EVENTS set Status = ? where ID_EVENT=?"""
-        cursor.execute(sql, ('CANCELLED', ID_Event))
+        cursor.execute(sql, ('CANCELLED', ID_Event))  
 
+        sql = """SELECT EventName FROM EVENTS where ID_EVENT=?"""
+        cursor.execute(sql, (ID_Event))
+        event_name = cursor.fetchall()
+
+        # sql = 'SELECT TelegramID from Users JOIN User_Event On ID_USER = TelegramID'
+        # cursor.execute(sql)
+        # data = cursor.fetchall()
+        # for i in data:
+        #     bot.send_message(i, f'Мероприятие {event_name} было отменено.')
+
+        sql = """DELETE FROM User_Event where ID_Event=?"""
+        cursor.execute(sql, (ID_Event))
+
+        sql_update_event = """Update User_Event set PeopleCount = 0 where ID_EVENT=?"""
+        cursor.execute(sql_update_event, ID_Event)
 
 
     if 'participants_list' in call.data:
@@ -251,8 +265,8 @@ def query_handler(call):
     if call.data == 'participant':
         bot.answer_callback_query(call.id)
         markup_inline = types.InlineKeyboardMarkup()
-        sql = 'SELECT * FROM Events'
-        cursor.execute(sql)
+        sql = 'SELECT * FROM Events WHERE Status!=?'
+        cursor.execute(sql, ('CANCELLED',))
         data = cursor.fetchall()
         for i in range(len(data)):
             cancel_event = types.InlineKeyboardButton(text=data[i][1], callback_data='describe_Event' + str(data[i][0]))
@@ -309,8 +323,8 @@ def query_handler(call):
     if call.data == 'eventsList':
         bot.answer_callback_query(call.id)
         markup_inline = types.InlineKeyboardMarkup()
-        sql = 'SELECT * from Events where ID_Org=:ID_Org'
-        cursor.execute(sql, {'ID_Org': call.from_user.id})
+        sql = 'SELECT * from Events where ID_Org=:ID_Org AND Status!=:Status'
+        cursor.execute(sql, {'ID_Org': call.from_user.id, 'Status': 'CANCELLED'})
         data = cursor.fetchall()
         print(data)
         for i in range(len(data)):
